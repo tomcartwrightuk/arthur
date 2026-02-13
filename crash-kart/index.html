@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Crash Kart</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+    }
+    #renderCanvas {
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+    #ui {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+      pointer-events: none;
+    }
+    #controls {
+      background: rgba(0,0,0,0.6);
+      padding: 15px;
+      border-radius: 10px;
+      margin-bottom: 10px;
+    }
+    #controls h3 {
+      margin: 0 0 10px 0;
+      color: #ffcc00;
+    }
+    #controls p {
+      margin: 5px 0;
+      font-size: 14px;
+    }
+    kbd {
+      background: #333;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid #555;
+    }
+    #steal-prompt {
+      position: absolute;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      color: #00ff00;
+      padding: 15px 30px;
+      border-radius: 10px;
+      font-size: 18px;
+      display: none;
+      border: 2px solid #00ff00;
+    }
+    #speed-display {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.7);
+      color: #00ffcc;
+      padding: 15px 25px;
+      border-radius: 10px;
+      font-size: 24px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="renderCanvas"></canvas>
+  
+  <div id="ui">
+    <div id="controls">
+      <h3>🎮 Controls</h3>
+      <p><kbd>W</kbd> / <kbd>↑</kbd> Accelerate</p>
+      <p><kbd>S</kbd> / <kbd>↓</kbd> Brake / Reverse</p>
+      <p><kbd>A</kbd> / <kbd>←</kbd> Steer Left</p>
+      <p><kbd>D</kbd> / <kbd>→</kbd> Steer Right</p>
+      <p><kbd>F</kbd> Enter/Exit Car</p>
+    </div>
+  </div>
+  
+  <div id="steal-prompt">Press <kbd>F</kbd> to steal this car!</div>
+  <div id="speed-display">0 km/h</div>
+  
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/cannon.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
