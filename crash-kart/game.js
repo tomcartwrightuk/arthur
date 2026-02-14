@@ -35,6 +35,14 @@ const CAR_COLORS = [
   { name: "Black", color: new BABYLON.Color3(0.1, 0.1, 0.1) },
 ];
 
+// Track parameters (stadium shape: two straights connected by semicircular turns)
+const TRACK_RADIUS = 40;
+const TRACK_HALF_LENGTH = 240;
+const TRACK_HALF_WIDTH = 10;
+const WALL_HEIGHT = 2;
+const WALL_THICKNESS = 1.5;
+const NUM_TRACK_POINTS = 200;
+
 // ============================================
 // CREATE THE SCENE
 // ============================================
@@ -52,14 +60,14 @@ const createScene = async () => {
   // ========== CAMERA (Chase Camera) ==========
   const camera = new BABYLON.FreeCamera(
     "camera",
-    new BABYLON.Vector3(0, 8, -15),
+    new BABYLON.Vector3(TRACK_RADIUS, 8, -40),
     scene
   );
   camera.fov = 1.0; // Slightly wider field of view
-  
+
   // Camera smoothing values (stored on camera for access in update)
-  camera.smoothPosition = new BABYLON.Vector3(0, 8, -15);
-  camera.smoothTarget = new BABYLON.Vector3(0, 0, 0);
+  camera.smoothPosition = new BABYLON.Vector3(TRACK_RADIUS, 8, -40);
+  camera.smoothTarget = new BABYLON.Vector3(TRACK_RADIUS, 1, 0);
 
   // ========== LIGHTING ==========
   const sunLight = new BABYLON.DirectionalLight(
@@ -77,34 +85,30 @@ const createScene = async () => {
   );
   ambientLight.intensity = 0.5;
 
-  // ========== GROUND ==========
-  const ground = createGround(scene);
+  // ========== TRACK ==========
+  createTrack(scene);
 
-  // ========== CREATE CARS ==========
-  // Player's starting car (white Lamborghini)
-  const playerCar = createCar(scene, 0, 0, CAR_COLORS[0]);
-  allCars.push(playerCar);
-  currentCar = playerCar;
-  currentCar.isPlayerControlled = true;
-
-  // Spawn additional cars around the map
-  const carSpawnPositions = [
-    { x: 15, z: 10 },
-    { x: -20, z: 5 },
-    { x: 30, z: -15 },
-    { x: -10, z: -25 },
-    { x: 25, z: 25 },
-    { x: -30, z: -30 },
-    { x: 40, z: 0 },
+  // ========== CREATE CARS (Starting Grid) ==========
+  // Staggered 2-column grid on the right straight, all facing +z
+  const startCenterX = TRACK_RADIUS;
+  const gridPositions = [
+    { x: startCenterX + 4, z: -2 },
+    { x: startCenterX - 4, z: -5 },
+    { x: startCenterX + 4, z: -10 },
+    { x: startCenterX - 4, z: -13 },
+    { x: startCenterX + 4, z: -18 },
+    { x: startCenterX - 4, z: -21 },
+    { x: startCenterX + 4, z: -26 },
+    { x: startCenterX - 4, z: -29 },
   ];
 
-  carSpawnPositions.forEach((pos, index) => {
-    const colorIndex = (index + 1) % CAR_COLORS.length;
-    const car = createCar(scene, pos.x, pos.z, CAR_COLORS[colorIndex]);
-    // Apply random rotation using quaternion
-    const randomAngle = Math.random() * Math.PI * 2;
-    car.body.rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(0, randomAngle, 0);
+  gridPositions.forEach((pos, index) => {
+    const car = createCar(scene, pos.x, pos.z, CAR_COLORS[index % CAR_COLORS.length]);
     allCars.push(car);
+    if (index === 0) {
+      currentCar = car;
+      currentCar.isPlayerControlled = true;
+    }
   });
 
   // ========== INPUT HANDLING ==========
@@ -122,30 +126,202 @@ const createScene = async () => {
 };
 
 // ============================================
-// CREATE GROUND
+// CREATE TRACK (Stadium shape with walls)
 // ============================================
-function createGround(scene) {
-  const ground = BABYLON.MeshBuilder.CreateGround(
-    "ground",
-    { width: 200, height: 200, subdivisions: 50 },
-    scene
-  );
+function createTrack(scene) {
+  console.log("Creating track");
+  // Materials
+  const trackMat = new BABYLON.StandardMaterial("trackMat", scene);
+  trackMat.diffuseColor = new BABYLON.Color3(0.25, 0.25, 0.25);
+  trackMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
 
-  // Asphalt material
-  const groundMaterial = new BABYLON.StandardMaterial("groundMat", scene);
-  groundMaterial.diffuseColor = new BABYLON.Color3(0.2, 0.2, 0.2);
-  groundMaterial.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
-  ground.material = groundMaterial;
+  const wallMat = new BABYLON.StandardMaterial("wallMat", scene);
+  wallMat.diffuseColor = new BABYLON.Color3(0.75, 0.75, 0.7);
+  wallMat.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
 
-  // Physics for ground
-  ground.physicsImpostor = new BABYLON.PhysicsImpostor(
-    ground,
-    BABYLON.PhysicsImpostor.BoxImpostor,
-    { mass: 0, friction: 0.8, restitution: 0.1 },
-    scene
-  );
+  const wallTopMat = new BABYLON.StandardMaterial("wallTopMat", scene);
+  wallTopMat.diffuseColor = new BABYLON.Color3(0.85, 0.1, 0.1);
 
-  return ground;
+  const grassMat = new BABYLON.StandardMaterial("grassMat", scene);
+  grassMat.diffuseColor = new BABYLON.Color3(0.15, 0.45, 0.1);
+  grassMat.specularColor = new BABYLON.Color3(0.02, 0.02, 0.02);
+
+  const startLineMat = new BABYLON.StandardMaterial("startLineMat", scene);
+  startLineMat.diffuseColor = new BABYLON.Color3(1, 1, 1);
+  startLineMat.emissiveColor = new BABYLON.Color3(0.15, 0.15, 0.15);
+
+  // Point arrays for track geometry
+  const innerEdge = [];
+  const outerEdge = [];
+  const innerWallBottom = [];
+  const innerWallTop = [];
+  const innerWallCapInner = [];
+  const outerWallBottom = [];
+  const outerWallTop = [];
+  const outerWallCapOuter = [];
+
+  const R = TRACK_RADIUS;
+  const halfL = TRACK_HALF_LENGTH;
+  const fullL = halfL * 2;
+  const totalLen = 2 * fullL + 2 * Math.PI * R;
+
+  for (let i = 0; i <= NUM_TRACK_POINTS; i++) {
+    const t = i / NUM_TRACK_POINTS;
+    const d = t * totalLen;
+
+    let cx, cz, nx, nz;
+
+    if (d < fullL) {
+      // Right straight, going +z
+      cx = R; cz = -halfL + d; nx = 1; nz = 0;
+    } else if (d < fullL + Math.PI * R) {
+      // Top semicircle
+      const alpha = (d - fullL) / R;
+      cx = R * Math.cos(alpha);
+      cz = halfL + R * Math.sin(alpha);
+      nx = Math.cos(alpha);
+      nz = Math.sin(alpha);
+    } else if (d < 2 * fullL + Math.PI * R) {
+      // Left straight, going -z
+      const dist = d - fullL - Math.PI * R;
+      cx = -R; cz = halfL - dist; nx = -1; nz = 0;
+    } else {
+      // Bottom semicircle
+      const alpha = Math.PI + (d - 2 * fullL - Math.PI * R) / R;
+      cx = R * Math.cos(alpha);
+      cz = -halfL + R * Math.sin(alpha);
+      nx = Math.cos(alpha);
+      nz = Math.sin(alpha);
+    }
+
+    // Track edges
+    const inX = cx - nx * TRACK_HALF_WIDTH;
+    const inZ = cz - nz * TRACK_HALF_WIDTH;
+    const outX = cx + nx * TRACK_HALF_WIDTH;
+    const outZ = cz + nz * TRACK_HALF_WIDTH;
+
+    innerEdge.push(new BABYLON.Vector3(inX, 0.01, inZ));
+    outerEdge.push(new BABYLON.Vector3(outX, 0.01, outZ));
+
+    // Inner wall (extends inward from inner track edge)
+    innerWallBottom.push(new BABYLON.Vector3(inX, 0.01, inZ));
+    innerWallTop.push(new BABYLON.Vector3(inX, WALL_HEIGHT, inZ));
+    innerWallCapInner.push(new BABYLON.Vector3(
+      inX - nx * WALL_THICKNESS, WALL_HEIGHT, inZ - nz * WALL_THICKNESS
+    ));
+
+    // Outer wall (extends outward from outer track edge)
+    outerWallBottom.push(new BABYLON.Vector3(outX, 0.01, outZ));
+    outerWallTop.push(new BABYLON.Vector3(outX, WALL_HEIGHT, outZ));
+    outerWallCapOuter.push(new BABYLON.Vector3(
+      outX + nx * WALL_THICKNESS, WALL_HEIGHT, outZ + nz * WALL_THICKNESS
+    ));
+  }
+
+  // Track surface
+  const trackSurface = BABYLON.MeshBuilder.CreateRibbon("trackSurface", {
+    pathArray: [innerEdge, outerEdge],
+    sideOrientation: BABYLON.Mesh.DOUBLESIDE
+  }, scene);
+  trackSurface.material = trackMat;
+
+  // Inner wall face + top cap
+  const innerWallFace = BABYLON.MeshBuilder.CreateRibbon("innerWallFace", {
+    pathArray: [innerWallBottom, innerWallTop],
+    sideOrientation: BABYLON.Mesh.DOUBLESIDE
+  }, scene);
+  innerWallFace.material = wallMat;
+
+  const innerWallCap = BABYLON.MeshBuilder.CreateRibbon("innerWallCap", {
+    pathArray: [innerWallTop, innerWallCapInner],
+    sideOrientation: BABYLON.Mesh.DOUBLESIDE
+  }, scene);
+  innerWallCap.material = wallTopMat;
+
+  // Outer wall face + top cap
+  const outerWallFace = BABYLON.MeshBuilder.CreateRibbon("outerWallFace", {
+    pathArray: [outerWallBottom, outerWallTop],
+    sideOrientation: BABYLON.Mesh.DOUBLESIDE
+  }, scene);
+  outerWallFace.material = wallMat;
+
+  const outerWallCap = BABYLON.MeshBuilder.CreateRibbon("outerWallCap", {
+    pathArray: [outerWallTop, outerWallCapOuter],
+    sideOrientation: BABYLON.Mesh.DOUBLESIDE
+  }, scene);
+  outerWallCap.material = wallTopMat;
+
+  // Grass ground beneath everything
+  const ground = BABYLON.MeshBuilder.CreateGround("ground", {
+    width: 500, height: 900
+  }, scene);
+  ground.material = grassMat;
+  ground.position.y = -0.01;
+
+  // Start/finish line across the track
+  const startLine = BABYLON.MeshBuilder.CreateBox("startLine", {
+    width: TRACK_HALF_WIDTH * 2, height: 0.05, depth: 2
+  }, scene);
+  startLine.position = new BABYLON.Vector3(TRACK_RADIUS, 0.02, 0);
+  startLine.material = startLineMat;
+}
+
+// ============================================
+// TRACK COLLISION HELPERS
+// ============================================
+function getClosestTrackInfo(px, pz) {
+  const R = TRACK_RADIUS;
+  const halfL = TRACK_HALF_LENGTH;
+
+  let cx, cz, nx, nz;
+
+  if (pz >= halfL) {
+    // Top turn region
+    const dx = px, dz = pz - halfL;
+    const dist = Math.sqrt(dx * dx + dz * dz) || 1;
+    cx = R * dx / dist;
+    cz = halfL + R * dz / dist;
+    nx = dx / dist;
+    nz = dz / dist;
+  } else if (pz <= -halfL) {
+    // Bottom turn region
+    const dx = px, dz = pz + halfL;
+    const dist = Math.sqrt(dx * dx + dz * dz) || 1;
+    cx = R * dx / dist;
+    cz = -halfL + R * dz / dist;
+    nx = dx / dist;
+    nz = dz / dist;
+  } else if (px >= 0) {
+    // Right straight region
+    cx = R; cz = pz; nx = 1; nz = 0;
+  } else {
+    // Left straight region
+    cx = -R; cz = pz; nx = -1; nz = 0;
+  }
+
+  return { cx, cz, nx, nz };
+}
+
+function constrainToTrack(carBody) {
+  const { cx, cz, nx, nz } = getClosestTrackInfo(carBody.position.x, carBody.position.z);
+
+  const dx = carBody.position.x - cx;
+  const dz = carBody.position.z - cz;
+  const signedDist = dx * nx + dz * nz;
+
+  const margin = TRACK_HALF_WIDTH - 1.2;
+
+  if (signedDist > margin) {
+    const penetration = signedDist - margin;
+    carBody.position.x -= nx * penetration;
+    carBody.position.z -= nz * penetration;
+    carSpeed *= Math.max(0.3, 1 - penetration * 0.5);
+  } else if (signedDist < -margin) {
+    const penetration = -margin - signedDist;
+    carBody.position.x += nx * penetration;
+    carBody.position.z += nz * penetration;
+    carSpeed *= Math.max(0.3, 1 - penetration * 0.5);
+  }
 }
 
 // ============================================
@@ -362,7 +538,6 @@ function createCarVisuals(scene, bodyColor) {
 function setupInputHandling(scene) {
   scene.onKeyboardObservable.add((kbInfo) => {
     const pressed = kbInfo.type === BABYLON.KeyboardEventTypes.KEYDOWN;
-    
     switch (kbInfo.event.key.toLowerCase()) {
       case "w":
       case "arrowup":
@@ -411,8 +586,8 @@ function updateCarPhysics() {
 
   // ===== ACCELERATION / BRAKING =====
   const maxSpeed = 0.8;
-  const acceleration = 0.02;
-  const braking = 0.03;
+  const acceleration = 0.005;
+  const braking = 0.005;
   const friction = 0.98;
   
   if (keys.forward) {
@@ -426,7 +601,7 @@ function updateCarPhysics() {
   }
 
   // ===== STEERING =====
-  const steerSpeed = 0.04;
+  const steerSpeed = 0.02;
   
   if (Math.abs(carSpeed) > 0.01) {
     // Steer based on speed direction
@@ -458,6 +633,9 @@ function updateCarPhysics() {
   
   // Keep car at fixed height
   carBody.position.y = 1;
+
+  // Keep car within track walls
+  constrainToTrack(carBody);
 
   // Update speed display (convert to km/h-like units)
   currentCar.speed = Math.abs(carSpeed) * 120;
