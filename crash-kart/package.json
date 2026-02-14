@@ -5,7 +5,8 @@
   "scripts": {
     "build": "bun build src/game.js --outdir=dist --minify --target=browser",
     "dev": "bun --watch build src/game.js --outdir=dist --target=browser",
-    "preview": "cd dist && python3 -m http.server 8080"
+    "preview": "cd dist && python3 -m http.server 8080",
+    "deploy": "bun run build && wrangler pages deploy dist"
   },
   "dependencies": {
     "@babylonjs/core": "^7.0.0",
