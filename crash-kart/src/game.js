@@ -14,11 +14,26 @@ const engine = new BABYLON.Engine(canvas, true);
 // UI Elements
 const stealPrompt = document.getElementById("steal-prompt");
 const speedDisplay = document.getElementById("speed-display");
+const countdownEl = document.getElementById("countdown");
+const lapDisplay = document.getElementById("lap-display");
+const raceTimerEl = document.getElementById("race-timer");
+const raceFinishEl = document.getElementById("race-finish");
+const finishTimeEl = document.getElementById("finish-time");
 
 // Game state
 let currentCar = null;
 let allCars = [];
 let nearestCar = null;
+
+// Race state
+const TOTAL_LAPS = 3;
+let raceState = "countdown"; // "countdown" | "racing" | "finished"
+let currentLap = 0;
+let raceStartTime = 0;
+let raceElapsed = 0;
+let countdownValue = 3;
+let countdownTimer = null;
+let lastZ = 0; // Previous frame z position for start line crossing detection
 
 // Input state
 const keys = {
@@ -48,6 +63,120 @@ const TRACK_HALF_WIDTH = 10;
 const WALL_HEIGHT = 2;
 const WALL_THICKNESS = 1.5;
 const NUM_TRACK_POINTS = 200;
+
+// ============================================
+// RACE MANAGEMENT
+// ============================================
+function formatTime(ms) {
+  const totalSeconds = ms / 1000;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const millis = Math.floor(ms % 1000);
+  return `${minutes}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+}
+
+function startCountdown() {
+  raceState = "countdown";
+  currentLap = 0;
+  raceElapsed = 0;
+  countdownValue = 3;
+  raceFinishEl.style.display = "none";
+  lapDisplay.textContent = `Lap 0 / ${TOTAL_LAPS}`;
+  raceTimerEl.textContent = "0:00.000";
+
+  countdownEl.style.display = "block";
+  countdownEl.textContent = countdownValue;
+  countdownEl.style.color = "#ff4444";
+
+  countdownTimer = setInterval(() => {
+    countdownValue--;
+    if (countdownValue > 0) {
+      countdownEl.textContent = countdownValue;
+      countdownEl.style.color = countdownValue === 1 ? "#44ff44" : "#ffcc00";
+    } else if (countdownValue === 0) {
+      countdownEl.textContent = "GO!";
+      countdownEl.style.color = "#44ff44";
+      raceState = "racing";
+      raceStartTime = performance.now();
+      // Initialize lastZ for lap detection
+      if (currentCar && currentCar.body) {
+        lastZ = currentCar.body.position.z;
+      }
+    } else {
+      // Hide countdown after "GO!" shows briefly
+      countdownEl.style.display = "none";
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }, 1000);
+}
+
+function checkLapCrossing() {
+  if (raceState !== "racing" || !currentCar || !currentCar.body) return;
+
+  const carBody = currentCar.body;
+  const currentZ = carBody.position.z;
+  const carX = carBody.position.x;
+
+  // Check if car is on the right straight (near x = TRACK_RADIUS)
+  const onRightStraight = Math.abs(carX - TRACK_RADIUS) < TRACK_HALF_WIDTH + 2;
+
+  // Detect crossing z=0 going in the +z direction (the racing direction on right straight)
+  if (onRightStraight && lastZ < 0 && currentZ >= 0) {
+    currentLap++;
+    lapDisplay.textContent = `Lap ${Math.min(currentLap, TOTAL_LAPS)} / ${TOTAL_LAPS}`;
+
+    if (currentLap >= TOTAL_LAPS) {
+      finishRace();
+    }
+  }
+
+  lastZ = currentZ;
+}
+
+function finishRace() {
+  raceState = "finished";
+  raceElapsed = performance.now() - raceStartTime;
+  const timeStr = formatTime(raceElapsed);
+  raceTimerEl.textContent = timeStr;
+  finishTimeEl.textContent = timeStr;
+  raceFinishEl.style.display = "block";
+}
+
+function resetRace() {
+  // Reset car positions
+  const startCenterX = TRACK_RADIUS;
+  const gridPositions = [
+    { x: startCenterX + 4, z: -2 },
+    { x: startCenterX - 4, z: -5 },
+    { x: startCenterX + 4, z: -10 },
+    { x: startCenterX - 4, z: -13 },
+    { x: startCenterX + 4, z: -18 },
+    { x: startCenterX - 4, z: -21 },
+    { x: startCenterX + 4, z: -26 },
+    { x: startCenterX - 4, z: -29 },
+  ];
+
+  allCars.forEach((car, index) => {
+    if (index < gridPositions.length) {
+      car.body.position = new BABYLON.Vector3(gridPositions[index].x, 1, gridPositions[index].z);
+      car.body.rotationQuaternion = BABYLON.Quaternion.Identity();
+      car.speed = 0;
+      car.steering = 0;
+    }
+  });
+
+  // Reset driving state
+  carSpeed = 0;
+  carRotation = 0;
+
+  // Switch back to first car
+  if (currentCar) currentCar.isPlayerControlled = false;
+  currentCar = allCars[0];
+  currentCar.isPlayerControlled = true;
+
+  startCountdown();
+}
 
 // ============================================
 // CREATE THE SCENE
@@ -125,8 +254,13 @@ const createScene = async () => {
     updateCarPhysics();
     updateCamera(camera);
     checkNearestCar();
+    checkLapCrossing();
+    updateRaceTimer();
     updateUI();
   });
+
+  // Start the countdown
+  startCountdown();
 
   return scene;
 };
@@ -569,6 +703,11 @@ function setupInputHandling(scene) {
           keys.enter = false;
         }
         break;
+      case "r":
+        if (pressed && raceState === "finished") {
+          resetRace();
+        }
+        break;
     }
   });
 }
@@ -585,20 +724,23 @@ function updateCarPhysics() {
   if (!currentCar || !currentCar.body) return;
 
   const carBody = currentCar.body;
-  
+
   // Get current rotation from quaternion
   const euler = carBody.rotationQuaternion.toEulerAngles();
   carRotation = euler.y;
+
+  // Block controls during countdown or after race finish
+  const canDrive = raceState === "racing";
 
   // ===== ACCELERATION / BRAKING =====
   const maxSpeed = 0.8;
   const acceleration = 0.005;
   const braking = 0.005;
   const friction = 0.98;
-  
-  if (keys.forward) {
+
+  if (canDrive && keys.forward) {
     carSpeed = Math.min(carSpeed + acceleration, maxSpeed);
-  } else if (keys.backward) {
+  } else if (canDrive && keys.backward) {
     carSpeed = Math.max(carSpeed - braking, -maxSpeed * 0.5);
   } else {
     // Apply friction when not accelerating
@@ -609,10 +751,10 @@ function updateCarPhysics() {
   // ===== STEERING =====
   const steerSpeed = 0.02;
   
-  if (Math.abs(carSpeed) > 0.01) {
+  if (canDrive && Math.abs(carSpeed) > 0.01) {
     // Steer based on speed direction
     const steerAmount = steerSpeed * Math.sign(carSpeed);
-    
+
     if (keys.left) {
       carRotation -= steerAmount;
       currentCar.steering = Math.min(currentCar.steering + 0.15, 0.6);
@@ -750,6 +892,16 @@ function tryStealCar() {
     nearestCar = null;
     
     console.log("Stole a " + currentCar.color.name + " car!");
+  }
+}
+
+// ============================================
+// RACE TIMER UPDATE
+// ============================================
+function updateRaceTimer() {
+  if (raceState === "racing") {
+    raceElapsed = performance.now() - raceStartTime;
+    raceTimerEl.textContent = formatTime(raceElapsed);
   }
 }
 
